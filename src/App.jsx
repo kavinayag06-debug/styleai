@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
@@ -14,6 +14,10 @@ function formatTime(totalSeconds) {
 
 function currentTimestamp() {
   return Date.now();
+}
+
+function wait(milliseconds) {
+  return new Promise(resolve => window.setTimeout(resolve, milliseconds));
 }
 
 const demoCloset = [
@@ -48,6 +52,9 @@ export default function App() {
   const [activeLook, setActiveLook] = useState(null);
   const [loading, setLoading] = useState(false);
   const [tryOnLoading, setTryOnLoading] = useState(false);
+  const tryOnLock = useRef(false);
+  const [jobProgress, setJobProgress] = useState(0);
+  const [jobStage, setJobStage] = useState("Waiting for GPU");
   const [tryOnStartedAt, setTryOnStartedAt] = useState(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [estimatedSeconds, setEstimatedSeconds] = useState(DEFAULT_SECONDS_PER_GARMENT * 2);
@@ -111,6 +118,7 @@ export default function App() {
   };
 
   const tryOn = async (look) => {
+    if (tryOnLock.current) return;
     const outfitItems = look.item_ids.map(id => closet.find(item => item.id === id)).filter(Boolean);
     const garments = outfitItems.filter(item => ["top", "bottom", "dress", "outerwear"].includes(item.category));
     if (!garments.length || garments.some(item => !item.image_path)) return setError("Every item needs a garment photo before this outfit can be tried on.");
@@ -119,25 +127,68 @@ export default function App() {
     setEstimatedSeconds(learnedSeconds * garments.length);
     setElapsedSeconds(0);
     setTryOnStartedAt(startedAt);
+    setJobProgress(0);
+    setJobStage("Submitting try-on");
     setActiveLook(look);
+    tryOnLock.current = true;
     setTryOnLoading(true); setError("");
     try {
-      const response = await fetch(`${API}/tryon-outfit`, {
+      const response = await fetch(`${API}/tryon-jobs`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           garments: garments.map(item => ({ path: item.image_path, category: item.category })),
           model_path: "uploads/user-model-new.jpg",
         }),
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || "Try-on failed");
-      setModelImage(data.result_url);
-      const secondsPerGarment = ((currentTimestamp() - startedAt) / 1000) / garments.length;
+      const submitted = await response.json();
+      if (!response.ok) throw new Error(submitted.detail || "Could not create try-on job");
+      const jobId = submitted.job_id;
+      window.localStorage.setItem("styleai-active-job", jobId);
+      setJobStage(submitted.stage || "Waiting for GPU");
+
+      let completedJob = null;
+      let temporaryFailures = 0;
+      while (!completedJob) {
+        await wait(2500);
+        try {
+          const statusResponse = await fetch(`${API}/tryon-jobs/${jobId}`);
+          const status = await statusResponse.json();
+          if (!statusResponse.ok) throw new Error(status.detail || "Could not read try-on status");
+          temporaryFailures = 0;
+          setJobProgress(status.progress || 0);
+          setJobStage(status.stage || status.status);
+          if (typeof status.elapsed_seconds === "number" && status.elapsed_seconds > 0) {
+            setElapsedSeconds(status.elapsed_seconds);
+          }
+          if (status.status === "failed") {
+            const terminalError = new Error(status.error || "FASHN VTON failed");
+            terminalError.terminal = true;
+            throw terminalError;
+          }
+          if (status.status === "complete") completedJob = status;
+        } catch (pollError) {
+          if (pollError.terminal) throw pollError;
+          temporaryFailures += 1;
+          setJobStage(`Reconnecting to job… (${temporaryFailures}/12)`);
+          if (temporaryFailures >= 12) throw pollError;
+          await wait(2500);
+        }
+      }
+
+      const resultUrl = completedJob.result_path?.startsWith("http")
+        ? completedJob.result_path
+        : `${API}/${completedJob.result_path}`;
+      setModelImage(resultUrl);
+      const secondsPerGarment = completedJob.elapsed_seconds / garments.length;
       const previous = Number(window.localStorage.getItem("styleai-seconds-per-garment"));
       const smoothed = previous ? (previous * 0.6) + (secondsPerGarment * 0.4) : secondsPerGarment;
       window.localStorage.setItem("styleai-seconds-per-garment", String(Math.round(smoothed)));
+      window.localStorage.removeItem("styleai-active-job");
     } catch (requestError) { setError(requestError.message || "FASHN VTON could not finish the try-on."); }
-    finally { setTryOnLoading(false); }
+    finally {
+      tryOnLock.current = false;
+      setTryOnLoading(false);
+    }
   };
 
   const uploadItem = async (file) => {
@@ -179,7 +230,7 @@ export default function App() {
         <div className="model-frame yellow"><div className="frame-glow"/><img src={modelImage} alt="User in the virtual fitting room"/><div className="scan-line"/></div>
         <div className="look-label"><span>{activeLook ? "AI RECOMMENDS" : "YOUR BASE LOOK"}</span><strong>{activeLook?.name || "Ready to style"}</strong><small>{activeLook?.reason || "Choose Dress me to build an outfit from your closet."}</small></div>
         <div className="pedestal"><span/></div>
-        {activeLook && tryOnLoading && <div className="stage-actions"><div className={`try-progress ${SHOW_INFERENCE_TIMER ? "with-timer" : ""}`}><span>✦</span><div className="try-progress-copy"><strong>Creating your try-on</strong><small>FASHN VTON · high-quality mode</small>{SHOW_INFERENCE_TIMER && <div className="inference-timer"><div className="timer-labels"><span>{formatTime(elapsedSeconds)} elapsed</span><span>{elapsedSeconds < estimatedSeconds ? `~${formatTime(estimatedSeconds - elapsedSeconds)} remaining` : "Finishing…"}</span></div><div className="timer-track"><i style={{ width: `${Math.min(95, (elapsedSeconds / estimatedSeconds) * 100)}%` }}/></div><em>Estimate learns from completed runs on this Mac</em></div>}</div></div></div>}
+        {activeLook && tryOnLoading && <div className="stage-actions"><div className={`try-progress ${SHOW_INFERENCE_TIMER ? "with-timer" : ""}`}><span>✦</span><div className="try-progress-copy"><strong>Creating your try-on</strong><small>{jobStage} · {jobProgress}%</small>{SHOW_INFERENCE_TIMER && <div className="inference-timer"><div className="timer-labels"><span>{formatTime(elapsedSeconds)} elapsed</span><span>{elapsedSeconds < estimatedSeconds ? `~${formatTime(estimatedSeconds - elapsedSeconds)} remaining` : "Finishing…"}</span></div><div className="timer-track"><i style={{ width: `${jobProgress}%` }}/></div><em>Live status from the remote GPU job</em></div>}</div></div></div>}
       </section>
 
       <aside className="closet-panel">

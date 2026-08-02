@@ -18,6 +18,10 @@ CATEGORY_MAP = {
 }
 
 
+def inference_timesteps() -> int:
+    return max(1, min(50, int(os.environ.get("FASHN_TIMESTEPS", "50"))))
+
+
 def _resolve(path: str) -> Path:
     candidate = Path(path) if path else DEFAULT_MODEL_IMAGE
     return candidate if candidate.is_absolute() else BASE_DIR / candidate
@@ -54,7 +58,7 @@ def _prepare_garment(path: Path, category: str) -> Image.Image:
     return image
 
 
-def run_tryon_outfit(garments: list[dict], model_image_path: str = "") -> str:
+def run_tryon_outfit(garments: list[dict], model_image_path: str = "", progress_callback=None) -> str:
     if not garments:
         raise ValueError("At least one garment is required")
     person_path = _resolve(model_image_path)
@@ -67,27 +71,41 @@ def run_tryon_outfit(garments: list[dict], model_image_path: str = "") -> str:
         f"fashn-v1.5|{person_path}|{[(g.get('path'), g.get('category')) for g in normalized]}".encode()
     ).hexdigest()
     if cache_key in CACHE:
+        if progress_callback:
+            progress_callback(99, "Using cached try-on")
         return CACHE[cache_key]
 
+    if progress_callback:
+        progress_callback(5, "Loading FASHN VTON")
     pipeline = _get_pipeline()
+    if progress_callback:
+        progress_callback(10, "Preparing person and garments")
     person = Image.open(person_path).convert("RGB")
-    for garment in normalized:
+    total = len(normalized)
+    for index, garment in enumerate(normalized):
         garment_path = _resolve(garment["path"])
         if not garment_path.exists():
             raise FileNotFoundError(f"Garment image not found: {garment_path}")
+        category_name = CATEGORY_MAP[garment["category"]]
+        if progress_callback:
+            progress_callback(10 + int((index / total) * 80), f"Applying {category_name}")
         result = pipeline(
             person_image=person,
             garment_image=_prepare_garment(garment_path, garment["category"]),
             category=CATEGORY_MAP[garment["category"]],
             garment_photo_type="model",
             num_samples=1,
-            num_timesteps=50,
+            num_timesteps=inference_timesteps(),
             guidance_scale=1.5,
             seed=42,
             segmentation_free=True,
         )
         person = result.images[0]
+        if progress_callback:
+            progress_callback(10 + int(((index + 1) / total) * 80), f"Finished {category_name}")
 
+    if progress_callback:
+        progress_callback(95, "Saving generated look")
     output_path = BASE_DIR / "uploads" / f"tryon_{uuid.uuid4()}.png"
     person.save(output_path)
     result_path = f"uploads/{output_path.name}"

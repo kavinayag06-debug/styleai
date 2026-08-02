@@ -5,7 +5,8 @@ from pydantic import BaseModel
 import uvicorn
 from capture import tag_clothing
 from inventory import load_closet, save_item
-from tryon import run_tryon, run_tryon_outfit
+from tryon import inference_timesteps, run_tryon, run_tryon_outfit
+from tryon_jobs import create_tryon_job, get_tryon_job
 from stylist import generate_outfits
 from inspiration import search_outfit_inspiration
 from starlette.concurrency import run_in_threadpool
@@ -16,7 +17,8 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=[],
+    allow_origin_regex=r"^http://(localhost|127\.0\.0\.1):\d+$",
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -120,9 +122,26 @@ async def tryon_outfit(req: OutfitTryOnRequest):
         print(f"[fashn-vton] generation failed: {error}")
         raise HTTPException(status_code=502, detail=str(error)) from error
 
+@app.post("/tryon-jobs", status_code=202)
+def submit_tryon_job(req: OutfitTryOnRequest):
+    garments = [garment.model_dump() for garment in req.garments]
+    return create_tryon_job(garments, req.model_path)
+
+@app.get("/tryon-jobs/{job_id}")
+def tryon_job_status(job_id: str):
+    job = get_tryon_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Try-on job not found")
+    return job
+
 @app.get("/tryon-provider")
 def tryon_provider():
-    return {"provider": "fashn-AI/fashn-vton-1.5", "mode": "local", "quality_steps": 50}
+    return {
+        "provider": "fashn-AI/fashn-vton-1.5",
+        "mode": "local",
+        "quality_steps": inference_timesteps(),
+        "job_queue": True,
+    }
 
 if __name__ == "__main__":
     uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)

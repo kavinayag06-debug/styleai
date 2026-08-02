@@ -21,6 +21,7 @@ cd backend
 source .venv-vton/bin/activate
 export OPENAI_API_KEY="your-key"
 export EXA_API_KEY="your-exa-key"
+export FASHN_TIMESTEPS="20"
 uvicorn app:app --reload --port 8000
 ```
 
@@ -43,7 +44,9 @@ Open `http://localhost:5173`. The frontend connects to `http://localhost:8000` b
 - `POST /recommendations` — generate outfits from active closet items
 - `POST /online-inspiration` — search the web for outside outfit inspiration with Exa
 - `POST /upload` — upload and AI-tag a garment
-- `POST /tryon-outfit` — sequentially try on a complete top/bottom outfit with FASHN VTON v1.5
+- `POST /tryon-jobs` — enqueue a complete top/bottom try-on and immediately return a job ID
+- `GET /tryon-jobs/{job_id}` — poll queued/running/completed status without a long-lived request
+- `POST /tryon-outfit` — synchronous compatibility endpoint for local use only
 - `GET /tryon-provider` — report the active inference provider and quality settings
 
 ## Try-on quality
