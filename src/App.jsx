@@ -61,6 +61,11 @@ export default function App() {
   const [modelImage, setModelImage] = useState("/user-model-new.jpg");
   const [error, setError] = useState("");
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [careOpen, setCareOpen] = useState(false);
+  const [careMode, setCareMode] = useState("restyle");
+  const [careLoading, setCareLoading] = useState(false);
+  const [careResults, setCareResults] = useState([]);
+  const [donationUrl, setDonationUrl] = useState("https://www.google.com/maps/search/clothing+donation+drop+off+near+me");
 
   useEffect(() => {
     fetch(`${API}/inventory`).then(response => {
@@ -204,10 +209,40 @@ export default function App() {
     finally { setLoading(false); }
   };
 
+  const selectedItem = closet.find(item => item.id === selected) || closet[0];
+
+  const openCare = (mode = "restyle") => {
+    setCareMode(mode); setCareOpen(true); setCareResults([]); setError("");
+  };
+
+  const loadCareResults = async (mode) => {
+    if (!selectedItem) return;
+    setCareMode(mode); setCareLoading(true); setCareResults([]); setError("");
+    try {
+      const endpoint = mode === "tutorials" ? "restyle-tutorials" : "restyle";
+      const response = await fetch(`${API}/${endpoint}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ item_id: selectedItem.id }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Could not load wardrobe ideas");
+      setCareResults(mode === "tutorials" ? data.tutorials || [] : data.styles || []);
+    } catch (requestError) { setError(requestError.message); }
+    finally { setCareLoading(false); }
+  };
+
+  const findDonation = () => {
+    setCareMode("donate"); setCareResults([]);
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(({ coords }) => {
+      setDonationUrl(`https://www.google.com/maps/search/clothing+donation+drop+off/@${coords.latitude},${coords.longitude},14z`);
+    }, () => setDonationUrl("https://www.google.com/maps/search/clothing+donation+drop+off+near+me"));
+  };
+
   return <main className="app-shell">
     <header className="topbar">
       <button className="brand"><span className="brand-mark">S</span><span>STYLE<span>AI</span></span></button>
-      <nav className="main-nav"><button className="active">My closet</button><button onClick={dressMe}>AI recommendations</button><button onClick={() => { setRecommendationMode("online"); setActiveLook(null); }}>Discover online</button><button onClick={() => setUploadOpen(true)}>Add item</button></nav>
+      <nav className="main-nav"><button className="active">My closet</button><button onClick={dressMe}>AI recommendations</button><button onClick={() => { setRecommendationMode("online"); setActiveLook(null); }}>Discover online</button><button onClick={() => openCare("restyle")}>Restyle & give</button><button onClick={() => setUploadOpen(true)}>Add item</button></nav>
       <div className="header-actions"><span className="api-status"><i /> Connected closet</span><button className="avatar">KG</button></div>
     </header>
 
@@ -238,8 +273,23 @@ export default function App() {
         <div className="tabs">{["all","top","bottom","dress"].map(tab => <button key={tab} onClick={() => setCategory(tab)} className={category === tab ? "active" : ""}>{tab === "all" ? "All" : `${tab[0].toUpperCase()}${tab.slice(1)}s`}</button>)}</div>
         <div className="wardrobe-grid featured">{shownItems.map(item => <button key={item.id} className={`garment-card ${selected === item.id ? "selected" : ""}`} onClick={() => setSelected(item.id)}><span className="garment-image"><img src={closetImage(item)} alt={item.name}/></span><span className="garment-meta"><strong>{item.name}</strong><small>{item.color} · {item.category}</small></span>{selected === item.id && <i>✓</i>}</button>)}</div>
         <button className="add-piece" onClick={() => setUploadOpen(true)}>＋ Add another piece</button>
+        <button className="care-entry" onClick={() => openCare("restyle")}><span>↻</span><div><strong>Restyle, repair or donate</strong><small>Make more of what you already own</small></div><b>→</b></button>
       </aside>
     </section>
+
+    {careOpen && <div className="care-backdrop" onClick={() => setCareOpen(false)}><section className="care-drawer" onClick={event => event.stopPropagation()}>
+      <button className="drawer-close" onClick={() => setCareOpen(false)}>×</button>
+      <p className="eyebrow"><span /> WARDROBE AFTERCARE</p><h2>Wear it longer.</h2>
+      <p className="care-intro">Restyle a piece you own, learn a practical transformation, or find somewhere nearby to pass it on.</p>
+      <label className="care-item-label">SELECT A CLOSET PIECE<select value={selectedItem?.id || ""} onChange={event => { setSelected(Number(event.target.value)); setCareResults([]); }}>{closet.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+      <div className="care-tabs"><button className={careMode === "restyle" ? "active" : ""} onClick={() => loadCareResults("restyle")}>Restyle with AI</button><button className={careMode === "tutorials" ? "active" : ""} onClick={() => loadCareResults("tutorials")}>Tutorials</button><button className={careMode === "donate" ? "active" : ""} onClick={findDonation}>Donate nearby</button></div>
+      {careLoading && <div className="care-empty">Finding the best ideas…</div>}
+      {!careLoading && careMode === "restyle" && !careResults.length && <button className="care-primary" onClick={() => loadCareResults("restyle")}>Generate 3 new ways to wear it</button>}
+      {!careLoading && careMode === "tutorials" && !careResults.length && <button className="care-primary" onClick={() => loadCareResults("tutorials")}>Find tutorials online</button>}
+      {!careLoading && careMode === "restyle" && <div className="care-results">{careResults.map((style, index) => <article key={`${style.name}-${index}`}><span>0{index + 1}</span><div><strong>{style.name}</strong><p>{style.description}</p><small>{style.item_ids?.map(id => closet.find(item => item.id === id)?.name).filter(Boolean).join(" + ")}</small></div></article>)}</div>}
+      {!careLoading && careMode === "tutorials" && <div className="care-results tutorial-results">{careResults.map((tutorial, index) => <a href={tutorial.url} target="_blank" rel="noreferrer" key={`${tutorial.url}-${index}`}>{tutorial.image && <img src={tutorial.image} alt=""/>}<div><strong>{tutorial.title}</strong><small>{tutorial.source}</small><p>{tutorial.summary}</p></div><b>↗</b></a>)}</div>}
+      {careMode === "donate" && <div className="donation-card"><span>⌖</span><h3>Give this piece a next life</h3><p>See clothing donation bins, charity shops and textile collection points around you.</p><a href={donationUrl} target="_blank" rel="noreferrer" onClick={findDonation}>Open nearby donation points ↗</a><small>Your location stays in your browser and is not stored by StyleAI.</small></div>}
+    </section></div>}
 
     {uploadOpen && <div className="modal-backdrop" onClick={() => setUploadOpen(false)}><div className="upload-modal" onClick={event => event.stopPropagation()}><button className="drawer-close" onClick={() => setUploadOpen(false)}>×</button><span className="upload-icon">＋</span><h2>Add to your closet</h2><p>Upload one clear garment photo. AI will identify and organise it automatically.</p><label>Choose a clothing photo<input type="file" accept="image/*" onChange={event => uploadItem(event.target.files[0])}/></label></div></div>}
   </main>;

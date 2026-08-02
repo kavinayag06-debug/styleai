@@ -9,6 +9,7 @@ from tryon import inference_timesteps, run_tryon, run_tryon_outfit
 from tryon_jobs import create_tryon_job, get_tryon_job
 from stylist import generate_outfits
 from inspiration import search_outfit_inspiration
+from circularity import generate_restyles, search_tutorials
 from starlette.concurrency import run_in_threadpool
 import uuid
 import os
@@ -86,6 +87,9 @@ class InspirationRequest(BaseModel):
     query: str = "fresh outfits"
     occasion: str = "casual"
 
+class ItemActionRequest(BaseModel):
+    item_id: int
+
 @app.post("/recommendations")
 async def recommendations(req: RecommendationRequest):
     items = [item for item in load_closet() if item.get("status") == "active"]
@@ -98,6 +102,26 @@ async def online_inspiration(req: InspirationRequest):
     except Exception as error:
         print(f"[exa] search failed: {error}")
         raise HTTPException(status_code=502, detail="Online inspiration search is unavailable") from error
+
+@app.post("/restyle")
+async def restyle_item(req: ItemActionRequest):
+    items = [item for item in load_closet() if item.get("status") == "active"]
+    item = next((piece for piece in items if piece.get("id") == req.item_id), None)
+    if not item:
+        raise HTTPException(status_code=404, detail="Closet item not found")
+    return {"item": item, "styles": await generate_restyles(item, items)}
+
+@app.post("/restyle-tutorials")
+async def restyle_tutorials(req: ItemActionRequest):
+    items = load_closet()
+    item = next((piece for piece in items if piece.get("id") == req.item_id), None)
+    if not item:
+        raise HTTPException(status_code=404, detail="Closet item not found")
+    try:
+        return {"item": item, "tutorials": await search_tutorials(item)}
+    except Exception as error:
+        print(f"[tutorials] Exa search failed: {error}")
+        raise HTTPException(status_code=502, detail="Tutorial search is unavailable") from error
 
 @app.post("/tryon-by-path")
 async def tryon_by_path(req: TryOnRequest):
