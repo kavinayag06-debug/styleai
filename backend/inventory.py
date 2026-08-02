@@ -37,3 +37,13 @@ def save_item(tags, filepath):
         json.dump(closet, f, indent=2)
 
     return item
+
+def donate_item(item_id):
+    closet = load_closet()
+    item = next((piece for piece in closet if piece.get("id") == item_id), None)
+    if not item:
+        return None
+    item["status"] = "donated"
+    with open(CLOSET_PATH, "w") as f:
+        json.dump(closet, f, indent=2)
+    return item

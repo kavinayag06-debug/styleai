@@ -4,12 +4,12 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import uvicorn
 from capture import tag_clothing
-from inventory import load_closet, save_item
+from inventory import donate_item, load_closet, save_item
 from tryon import inference_timesteps, run_tryon, run_tryon_outfit
 from tryon_jobs import create_tryon_job, get_tryon_job
 from stylist import generate_outfits
 from inspiration import search_outfit_inspiration
-from circularity import generate_restyles, search_tutorials
+from circularity import generate_restyle_guides
 from starlette.concurrency import run_in_threadpool
 import uuid
 import os
@@ -103,25 +103,40 @@ async def online_inspiration(req: InspirationRequest):
         print(f"[exa] search failed: {error}")
         raise HTTPException(status_code=502, detail="Online inspiration search is unavailable") from error
 
-@app.post("/restyle")
+@app.post("/restyle-guides")
 async def restyle_item(req: ItemActionRequest):
     items = [item for item in load_closet() if item.get("status") == "active"]
     item = next((piece for piece in items if piece.get("id") == req.item_id), None)
     if not item:
         raise HTTPException(status_code=404, detail="Closet item not found")
-    return {"item": item, "styles": await generate_restyles(item, items)}
+    return {"item": item, "ideas": await generate_restyle_guides(item)}
 
-@app.post("/restyle-tutorials")
-async def restyle_tutorials(req: ItemActionRequest):
-    items = load_closet()
-    item = next((piece for piece in items if piece.get("id") == req.item_id), None)
+@app.post("/donate-item")
+async def donate_closet_item(req: ItemActionRequest):
+    item = donate_item(req.item_id)
     if not item:
         raise HTTPException(status_code=404, detail="Closet item not found")
-    try:
-        return {"item": item, "tutorials": await search_tutorials(item)}
-    except Exception as error:
-        print(f"[tutorials] Exa search failed: {error}")
-        raise HTTPException(status_code=502, detail="Tutorial search is unavailable") from error
+    return {"message": "Item removed from the active closet", "item": item}
+
+@app.get("/model-images")
+def model_images():
+    candidates = []
+    for filename in os.listdir("uploads"):
+        lower = filename.lower()
+        if lower.endswith((".png", ".jpg", ".jpeg", ".webp")) and ("model" in lower or "user" in lower):
+            candidates.append({"name": filename, "path": f"uploads/{filename}", "url": f"/uploads/{filename}"})
+    return {"images": candidates}
+
+@app.post("/model-images")
+async def upload_model_image(file: UploadFile = File(...)):
+    ext = file.filename.rsplit(".", 1)[-1].lower()
+    if ext not in {"png", "jpg", "jpeg", "webp"}:
+        raise HTTPException(status_code=400, detail="Upload a PNG, JPG or WEBP image")
+    filename = f"user-model-{uuid.uuid4()}.{ext}"
+    filepath = f"uploads/{filename}"
+    with open(filepath, "wb") as f:
+        f.write(await file.read())
+    return {"name": filename, "path": filepath, "url": f"/uploads/{filename}"}
 
 @app.post("/tryon-by-path")
 async def tryon_by_path(req: TryOnRequest):
