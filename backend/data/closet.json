@@ -1,0 +1,44 @@
+[
+  {
+    "id": 102, "name": "Light Wash Wide-Leg Jeans", "category": "bottom",
+    "color": "blue", "pattern": "solid", "fabric": "denim",
+    "occasion": ["casual", "work"], "season": ["all"],
+    "last_worn": "2026-06-15", "rejection_count": 0, "status": "active",
+    "image_path": "uploads/jeans.png"
+  },
+  {
+    "id": 103, "name": "Butter Satin Dress", "category": "dress",
+    "color": "yellow", "pattern": "solid", "fabric": "silk",
+    "occasion": ["formal", "casual"], "season": ["summer", "spring"],
+    "last_worn": "2026-04-01", "rejection_count": 0, "status": "active",
+    "image_path": "uploads/yellow-dress.jpg"
+  },
+  {
+    "id": 104, "name": "Grey Jacquard Wrap Top", "category": "top",
+    "color": "grey", "pattern": "striped", "fabric": "knit",
+    "occasion": ["casual", "work"], "season": ["all"],
+    "last_worn": "2026-08-03", "rejection_count": 0, "status": "active",
+    "image_path": "uploads/grey-knit-top.png"
+  },
+  {
+    "id": 105, "name": "Aqua Cotton Wrap Top", "category": "top",
+    "color": "aqua", "pattern": "solid", "fabric": "cotton",
+    "occasion": ["casual", "work"], "season": ["summer", "spring"],
+    "last_worn": "2026-08-03", "rejection_count": 0, "status": "active",
+    "image_path": "uploads/aqua-wrap-top.png"
+  },
+  {
+    "id": 106, "name": "Stone Printed Wide-Leg Pants", "category": "bottom",
+    "color": "stone", "pattern": "floral", "fabric": "cotton",
+    "occasion": ["casual"], "season": ["summer", "spring", "autumn"],
+    "last_worn": "2026-07-08", "rejection_count": 0, "status": "active",
+    "image_path": "uploads/printed-wide-pants.png"
+  },
+  {
+    "id": 107, "name": "Blue Stripe Track Pants", "category": "bottom",
+    "color": "blue", "pattern": "striped", "fabric": "cotton",
+    "occasion": ["casual", "workout"], "season": ["all"],
+    "last_worn": "2026-07-21", "rejection_count": 0, "status": "active",
+    "image_path": "uploads/blue-track-pants.png"
+  }
+]
