@@ -6,7 +6,7 @@ import uvicorn
 from capture import tag_clothing
 from inventory import delete_item, donate_item, load_closet, save_item, save_online_item
 from tryon import inference_timesteps, run_tryon, run_tryon_outfit
-from tryon_jobs import create_tryon_job, get_tryon_job
+from tryon_jobs import create_tryon_job, get_tryon_job, summarize_jobs
 from stylist import generate_outfits
 from inspiration import search_outfit_inspiration, search_shoppable_products
 from circularity import generate_restyle_guides
@@ -272,11 +272,24 @@ def tryon_job_status(job_id: str):
 
 @app.get("/tryon-provider")
 def tryon_provider():
+    infrastructure = os.environ.get("INFERENCE_PLATFORM", "local-or-kaggle")
+    deployment_id = os.environ.get("GMI_DEPLOYMENT_ID")
     return {
         "provider": "fashn-AI/fashn-vton-1.5",
         "mode": "local",
+        "infrastructure": infrastructure,
+        "deployment_id": deployment_id,
+        "gmi_deployment_declared": infrastructure == "gmi-cloud" and bool(deployment_id),
         "quality_steps": inference_timesteps(),
         "job_queue": True,
+    }
+
+@app.get("/tryon-metrics")
+def tryon_metrics():
+    return {
+        **summarize_jobs(),
+        "infrastructure": os.environ.get("INFERENCE_PLATFORM", "local-or-kaggle"),
+        "quality_steps": inference_timesteps(),
     }
 
 if __name__ == "__main__":

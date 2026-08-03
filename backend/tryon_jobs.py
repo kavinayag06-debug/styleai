@@ -127,3 +127,19 @@ def get_tryon_job(job_id):
     with _lock:
         job = _jobs.get(job_id)
         return _serialize(job) if job else None
+
+
+def summarize_jobs():
+    with _lock:
+        completed = [_serialize(job) for job in _jobs.values() if job["status"] == "complete"]
+        failed = [job for job in _jobs.values() if job["status"] == "failed"]
+        running = [job for job in _jobs.values() if job["status"] in ("queued", "running")]
+    durations = [job["elapsed_seconds"] for job in completed]
+    return {
+        "completed_jobs": len(completed),
+        "failed_jobs": len(failed),
+        "active_jobs": len(running),
+        "average_seconds": round(sum(durations) / len(durations), 1) if durations else None,
+        "fastest_seconds": min(durations) if durations else None,
+        "slowest_seconds": max(durations) if durations else None,
+    }
