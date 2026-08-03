@@ -47,3 +47,32 @@ def donate_item(item_id):
     with open(CLOSET_PATH, "w") as f:
         json.dump(closet, f, indent=2)
     return item
+
+def delete_item(item_id):
+    closet = load_closet()
+    remaining = [item for item in closet if item.get("id") != item_id]
+    if len(remaining) == len(closet):
+        return None
+    with open(CLOSET_PATH, "w") as f:
+        json.dump(remaining, f, indent=2)
+    return True
+
+def save_online_item(name, category, color, source_url, filepath):
+    tags = {
+        "name": name or "Online find",
+        "category": category if category in {"top", "bottom", "dress", "outerwear"} else "top",
+        "color": color or "unknown",
+        "pattern": "unknown",
+        "fabric": "unknown",
+        "occasion": ["casual"],
+        "season": ["all"],
+    }
+    item = save_item(tags, filepath)
+    item["source_url"] = source_url
+    closet = load_closet()
+    for index, existing in enumerate(closet):
+        if existing.get("id") == item["id"]:
+            closet[index] = item
+    with open(CLOSET_PATH, "w") as f:
+        json.dump(closet, f, indent=2)
+    return item

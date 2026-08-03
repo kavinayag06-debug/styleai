@@ -1,5 +1,7 @@
 import os
+import json
 import httpx
+from openai import AsyncOpenAI
 
 
 async def search_outfit_inspiration(query: str, occasion: str = "casual"):
@@ -36,3 +38,62 @@ async def search_outfit_inspiration(query: str, occasion: str = "casual"):
             "source": result.get("author") or url.split("/")[2].replace("www.", ""),
         })
     return results
+
+
+async def search_shoppable_products(query: str, closet: list, vibe: list, surprise: bool = False):
+    api_key = os.environ.get("EXA_API_KEY")
+    if not api_key:
+        raise RuntimeError("EXA_API_KEY is not configured")
+    closet_summary = ", ".join(f"{item.get('color')} {item.get('category')}" for item in closet[:12])
+    vibe_text = ", ".join(vibe) or "versatile personal style"
+    intent = f"surprise fashion pieces matching {vibe_text} that complement a closet with {closet_summary}" if surprise else query
+    openai_key = os.environ.get("OPENAI_API_KEY")
+    if surprise and openai_key:
+        try:
+            direction = await AsyncOpenAI(api_key=openai_key).chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": f"Write one concise product-search query for 6 individual garments that fill useful gaps in this closet: {closet_summary}. User style: {vibe_text}. Focus on pieces that coordinate with what they own. Return only the search query."}],
+                temperature=0.65,
+            )
+            intent = direction.choices[0].message.content.strip()
+        except Exception as error:
+            print(f"[products] AI shopping direction unavailable: {error}")
+    search_query = f"{intent} product buy SHEIN Shopee Zalora H&M clothing"
+    payload = {
+        "query": search_query,
+        "type": "auto",
+        "numResults": 12,
+        "includeDomains": ["shein.com", "shopee.sg", "zalora.sg", "hm.com"],
+        "contents": {"text": {"maxCharacters": 450}, "highlights": {"numSentences": 2, "highlightsPerUrl": 1}},
+    }
+    async with httpx.AsyncClient(timeout=35) as client:
+        response = await client.post("https://api.exa.ai/search", headers={"x-api-key": api_key, "Content-Type": "application/json"}, json=payload)
+        response.raise_for_status()
+        raw = response.json().get("results", [])
+
+    products = [{
+        "title": result.get("title") or "Online fashion find",
+        "url": result.get("url"),
+        "image": result.get("image"),
+        "summary": (result.get("highlights") or [result.get("text", "")])[0][:220],
+        "retailer": (result.get("url") or "").split("/")[2].replace("www.", "") if result.get("url") else "",
+        "category": "top",
+        "color": "unknown",
+    } for result in raw if result.get("url") and result.get("image")]
+
+    if openai_key and products:
+        try:
+            response = await AsyncOpenAI(api_key=openai_key).chat.completions.create(
+                model="gpt-4o-mini",
+                response_format={"type": "json_object"},
+                messages=[{"role": "user", "content": f"Classify each product title as top, bottom, dress, or outerwear and infer its main color. Preserve order. Return JSON {{\"items\":[{{\"category\":\"top\",\"color\":\"blue\"}}]}}. Products: {json.dumps([p['title'] for p in products])}"}],
+                temperature=0,
+            )
+            labels = json.loads(response.choices[0].message.content).get("items", [])
+            for product, label in zip(products, labels):
+                if label.get("category") in {"top", "bottom", "dress", "outerwear"}:
+                    product["category"] = label["category"]
+                product["color"] = label.get("color") or "unknown"
+        except Exception as error:
+            print(f"[products] classification unavailable: {error}")
+    return products

@@ -28,7 +28,7 @@ async def _exa_sources(item):
     api_key = os.environ.get("EXA_API_KEY")
     if not api_key:
         return []
-    query = f"{item.get('name', '')} {item.get('category', '')} transform restyle folding hack tutorial video no sew"
+    query = f"{item.get('name', '')} {item.get('category', '')} transform restyle folding hack tutorial video no sew before after final result"
     payload = {
         "query": query,
         "type": "auto",

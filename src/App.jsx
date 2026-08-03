@@ -29,6 +29,9 @@ function closetImage(item) {
 }
 
 export default function App() {
+  const [authToken, setAuthToken] = useState(() => window.localStorage.getItem("styleai-token") || "");
+  const [user, setUser] = useState(() => JSON.parse(window.localStorage.getItem("styleai-user") || "null"));
+  const [loginError, setLoginError] = useState("");
   const [closet, setCloset] = useState(demoCloset);
   const [category, setCategory] = useState("all");
   const [selected, setSelected] = useState(104);
@@ -55,13 +58,14 @@ export default function App() {
   const [donationConfirm, setDonationConfirm] = useState(false);
 
   useEffect(() => {
+    if (!authToken) return;
     fetch(`${API}/inventory`).then(response => {
       if (!response.ok) throw new Error();
       return response.json();
     }).then(items => {
       setCloset(items.map(item => ({ ...item, image: demoCloset.find(demo => demo.id === item.id)?.image })));
     }).catch(() => {});
-  }, []);
+  }, [authToken]);
 
   useEffect(() => {
     fetch(`${API}/model-images`).then(response => response.json()).then(data => setModelOptions(data.images || [])).catch(() => {});
@@ -89,25 +93,25 @@ export default function App() {
     } finally { setLoading(false); }
   };
 
-  const searchOnline = async (event) => {
+  const searchOnline = async (event, surprise = false) => {
     event?.preventDefault();
     setRecommendationMode("online"); setLoading(true); setError(""); setActiveLook(null);
     try {
-      const response = await fetch(`${API}/online-inspiration`, {
+      const response = await fetch(`${API}/online-products`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: onlineQuery, occasion: "casual" }),
+        body: JSON.stringify({ query: onlineQuery, surprise, vibe: user?.style_preferences || [] }),
       });
       if (!response.ok) throw new Error();
       const data = await response.json();
       setOnlineResults(data.results || []);
       if (!data.results?.length) setError("No online looks matched that search. Try a broader style description.");
-    } catch { setError("Online search could not connect. Restart the backend after setting EXA_API_KEY."); }
+    } catch { setError("Online inspiration could not connect. Restart the backend after setting EXA_API_KEY."); }
     finally { setLoading(false); }
   };
 
   const tryOn = async (look) => {
     if (tryOnLock.current) return;
-    const outfitItems = look.item_ids.map(id => closet.find(item => item.id === id)).filter(Boolean);
+    const outfitItems = look.items || look.item_ids.map(id => closet.find(item => item.id === id)).filter(Boolean);
     const garments = outfitItems.filter(item => ["top", "bottom", "dress", "outerwear"].includes(item.category));
     if (!garments.length || garments.some(item => !item.image_path)) return setError("Every item needs a garment photo before this outfit can be tried on.");
     setJobProgress(0);
@@ -180,6 +184,43 @@ export default function App() {
     finally { setLoading(false); }
   };
 
+  const deleteClosetItem = async item => {
+    if (!window.confirm(`Delete ${item.name} from your closet?`)) return;
+    const response = await fetch(`${API}/inventory/${item.id}`, { method: "DELETE" });
+    if (!response.ok) return setError("This item could not be deleted.");
+    setCloset(current => current.filter(piece => piece.id !== item.id));
+    if (selected === item.id) setSelected(closet.find(piece => piece.id !== item.id)?.id || null);
+  };
+
+  const importProduct = async (product, addToCloset) => {
+    setLoading(true); setError("");
+    try {
+      const response = await fetch(`${API}/import-online-item`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...product, add_to_closet: addToCloset }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Could not import this product image");
+      if (addToCloset) {
+        setCloset(current => [...current, data.item]); setSelected(data.item.id); setRecommendationMode("closet");
+      } else {
+        await tryOn({ name: product.title, reason: `Online inspiration from ${product.retailer}`, item_ids: [], items: [{ name: product.title, category: product.category, image_path: data.path }] });
+      }
+    } catch (requestError) { setError(requestError.message); }
+    finally { setLoading(false); }
+  };
+
+  const signIn = async event => {
+    event.preventDefault(); setLoginError("");
+    const form = new FormData(event.currentTarget);
+    try {
+      const response = await fetch(`${API}/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: form.get("email"), password: form.get("password") }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Sign in failed");
+      window.localStorage.setItem("styleai-token", data.token); window.localStorage.setItem("styleai-user", JSON.stringify(data.user));
+      setAuthToken(data.token); setUser(data.user);
+    } catch (requestError) { setLoginError(requestError.message); }
+  };
+
+  const signOut = () => { window.localStorage.removeItem("styleai-token"); window.localStorage.removeItem("styleai-user"); setAuthToken(""); setUser(null); setProfileOpen(false); };
+
   const selectedItem = closet.find(item => item.id === selected) || closet[0];
 
   const openCare = (mode = "ideas") => {
@@ -238,16 +279,18 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
+  if (!authToken || !user) return <main className="login-page"><section className="login-visual"><div className="login-brand"><span>S</span> STYLEAI</div><div><p>YOUR DIGITAL WARDROBE</p><h1>More ways to wear<br/>what feels like <em>you.</em></h1><small>AI styling, virtual try-on and a more thoughtful path through your closet.</small></div></section><section className="login-panel"><form onSubmit={signIn}><p className="eyebrow"><span /> WELCOME BACK</p><h2>Sign in to your closet.</h2><label>Email<input name="email" type="email" defaultValue="signintothings123@gmail.com" required/></label><label>Password<input name="password" type="password" defaultValue="password123" required/></label>{loginError && <p className="login-error">{loginError}</p>}<button>Enter StyleAI <span>→</span></button><small>Demo account details are pre-filled for you.</small></form></section></main>;
+
   return <main className="app-shell">
     <section className="studio">
       <aside className="stylist-panel">
         <div><p className="eyebrow"><span /> AI STYLIST</p><h1>Your closet.<br />A fresh <em>look.</em></h1><p className="intro">Style what you own—or search beyond your wardrobe when nothing feels right.</p></div>
-        <div className="source-switch"><button className={recommendationMode === "closet" ? "active" : ""} onClick={() => setRecommendationMode("closet")}>From my closet</button><button className={recommendationMode === "online" ? "active" : ""} onClick={() => { setRecommendationMode("online"); setActiveLook(null); }}>Search online</button></div>
-        {recommendationMode === "closet" ? <button className="dress-button" onClick={dressMe} disabled={loading}><span>{loading ? "✦" : "↗"}</span><div><strong>{loading ? "Styling your closet..." : "Dress me"}</strong><small>{loading ? "Matching colour and fit" : "Generate from pieces I own"}</small></div></button> : <form className="online-search" onSubmit={searchOnline}><label>WHAT ARE YOU LOOKING FOR?</label><div><input value={onlineQuery} onChange={event => setOnlineQuery(event.target.value)} placeholder="e.g. minimalist dinner outfit"/><button disabled={loading}>{loading ? "…" : "Search"}</button></div><small>Powered by Exa · results open at their original source</small></form>}
+        <div className="source-switch"><button className={recommendationMode === "closet" ? "active" : ""} onClick={() => setRecommendationMode("closet")}>From my closet</button><button className={recommendationMode === "online" ? "active" : ""} onClick={() => { setRecommendationMode("online"); setActiveLook(null); }}>Online inspo</button></div>
+        {recommendationMode === "closet" ? <button className="dress-button" onClick={dressMe} disabled={loading}><span>{loading ? "✦" : "↗"}</span><div><strong>{loading ? "Styling your closet..." : "Dress me"}</strong><small>{loading ? "Matching colour and fit" : "Generate from pieces I own"}</small></div></button> : <form className="online-search" onSubmit={event => searchOnline(event, false)}><label>SEARCH SHOPPABLE INSPIRATION</label><div><input value={onlineQuery} onChange={event => setOnlineQuery(event.target.value)} placeholder="e.g. vintage dinner top"/><button disabled={loading}>{loading ? "…" : "Search"}</button></div><button type="button" className="surprise-button" onClick={() => searchOnline(null, true)} disabled={loading}>✦ Surprise me based on my closet & vibe</button><small>Public product previews from SHEIN, Shopee, Zalora and H&amp;M · powered by Exa</small></form>}
         {error && <p className="inline-error">{error}</p>}
         <div className="recommendation-list">
           <div className="rec-title"><span>{recommendationMode === "closet" ? "AI RECOMMENDATIONS" : "ONLINE INSPIRATION"}</span><small>{recommendationMode === "closet" ? (recommendations.length ? `${recommendations.length} looks` : "Tap Dress me") : (onlineResults.length ? `${onlineResults.length} finds` : "Search a style")}</small></div>
-          {recommendationMode === "closet" ? <>{!recommendations.length && <div className="empty-rec"><b>✦</b><span>Your styled looks will appear here.</span></div>}{recommendations.map((look, index) => <button key={`${look.name}-${index}`} className={`rec-card ${activeLook === look ? "active" : ""}`} onClick={() => tryOn(look)} disabled={tryOnLoading}><span>0{index + 1}</span><div><strong>{look.name}</strong><small>{activeLook === look && tryOnLoading ? "Creating try-on…" : look.reason}</small></div><i>→</i></button>)}</> : <>{!onlineResults.length && <div className="empty-rec"><b>⌕</b><span>Search the web when your closet needs new energy.</span></div>}{onlineResults.map((result, index) => <a key={`${result.url}-${index}`} className="online-card" href={result.url} target="_blank" rel="noreferrer">{result.image ? <img src={result.image} alt=""/> : <span>↗</span>}<div><strong>{result.title}</strong><small>{result.source}</small><p>{result.summary}</p></div></a>)}</>}
+          {recommendationMode === "closet" ? <>{!recommendations.length && <div className="empty-rec"><b>✦</b><span>Your styled looks will appear here.</span></div>}{recommendations.map((look, index) => <button key={`${look.name}-${index}`} className={`rec-card ${activeLook === look ? "active" : ""}`} onClick={() => tryOn(look)} disabled={tryOnLoading}><span>0{index + 1}</span><div><strong>{look.name}</strong><small>{activeLook === look && tryOnLoading ? "Creating try-on…" : look.reason}</small></div><i>→</i></button>)}</> : <>{!onlineResults.length && <div className="empty-rec"><b>⌕</b><span>Search with keywords or let AI surprise you.</span></div>}{onlineResults.map((product, index) => <article key={`${product.url}-${index}`} className="product-card"><a href={product.url} target="_blank" rel="noreferrer"><img src={product.image} alt={product.title}/></a><div><strong>{product.title}</strong><small>{product.retailer} · {product.category}</small><p>{product.summary}</p><div className="product-actions"><button onClick={() => importProduct(product, false)}>Try on</button><button onClick={() => importProduct(product, true)}>＋ Closet</button></div></div></article>)}</>}
         </div>
         <p className="closet-count">{closet.length} pieces in your digital wardrobe</p>
       </aside>
@@ -266,7 +309,7 @@ export default function App() {
       <aside className="closet-panel">
         <div className="closet-heading"><div><p className="eyebrow">YOUR WARDROBE</p><h2>The closet</h2></div><button onClick={() => setUploadOpen(true)}>＋</button></div>
         <div className="tabs">{["all","top","bottom","dress"].map(tab => <button key={tab} onClick={() => setCategory(tab)} className={category === tab ? "active" : ""}>{tab === "all" ? "All" : `${tab[0].toUpperCase()}${tab.slice(1)}s`}</button>)}</div>
-        <div className="wardrobe-grid featured">{shownItems.map(item => <button key={item.id} className={`garment-card ${selected === item.id ? "selected" : ""}`} onClick={() => setSelected(item.id)}><span className="garment-image"><img src={closetImage(item)} alt={item.name}/></span><span className="garment-meta"><strong>{item.name}</strong><small>{item.color} · {item.category}</small></span>{selected === item.id && <i>✓</i>}</button>)}</div>
+        <div className="wardrobe-grid featured">{shownItems.map(item => <article key={item.id} className={`garment-card ${selected === item.id ? "selected" : ""}`} onClick={() => setSelected(item.id)}><button className="trash-item" onClick={event => { event.stopPropagation(); deleteClosetItem(item); }} title={`Delete ${item.name}`} aria-label={`Delete ${item.name}`}>⌫</button><span className="garment-image"><img src={closetImage(item)} alt={item.name}/></span><span className="garment-meta"><strong>{item.name}</strong><small>{item.color} · {item.category}</small></span>{selected === item.id && <i>✓</i>}</article>)}</div>
         <button className="add-piece" onClick={() => setUploadOpen(true)}>＋ Add another piece</button>
         <button className="care-entry" onClick={() => openCare("ideas")}><span>↻</span><div><strong>Restyle, repair or donate</strong><small>Make more of what you already own</small></div><b>→</b></button>
       </aside>
@@ -280,11 +323,11 @@ export default function App() {
       <div className="care-tabs"><button className={careMode === "ideas" ? "active" : ""} onClick={loadCareResults}>Restyle ideas + tutorials</button><button className={careMode === "donate" ? "active" : ""} onClick={findDonation}>Donate nearby</button></div>
       {careLoading && <div className="care-empty">Finding the best ideas…</div>}
       {!careLoading && careMode === "ideas" && !careResults.length && <button className="care-primary" onClick={loadCareResults}>Generate transformation guides</button>}
-      {!careLoading && careMode === "ideas" && <div className="care-results guide-results">{careResults.map((idea, index) => <article key={`${idea.title}-${index}`}><span>IDEA {index + 1}</span><div><strong>{idea.title}</strong><p>{idea.description}</p>{idea.tutorial && <a className="tutorial-video" href={idea.tutorial.url} target="_blank" rel="noreferrer">▶ Watch / open tutorial · {idea.tutorial.source}</a>}<ol>{idea.steps?.map((step, stepIndex) => <li key={stepIndex}>{step}</li>)}</ol>{idea.care_note && <small>CARE NOTE · {idea.care_note}</small>}</div></article>)}</div>}
+      {!careLoading && careMode === "ideas" && <div className="care-results guide-results">{careResults.map((idea, index) => <article key={`${idea.title}-${index}`}><span>IDEA {index + 1}</span><div>{idea.tutorial?.image && <img className="restyle-result-image" src={idea.tutorial.image} alt={`Finished inspiration for ${idea.title}`}/>}<strong>{idea.title}</strong><p>{idea.description}</p>{idea.tutorial && <a className="tutorial-video" href={idea.tutorial.url} target="_blank" rel="noreferrer">▶ Watch / open tutorial · {idea.tutorial.source}</a>}<ol>{idea.steps?.map((step, stepIndex) => <li key={stepIndex}>{step}</li>)}</ol>{idea.care_note && <small>CARE NOTE · {idea.care_note}</small>}</div></article>)}</div>}
       {careMode === "donate" && <div className="donation-card"><span>⌖</span><h3>Donate {selectedItem?.name}?</h3><p>This will remove the item from your active closet. You will then be shown the closest donation and textile collection points.</p>{!donationConfirm ? <button onClick={findDonation}>Continue</button> : <div className="donation-confirm"><strong>Are you sure you want to donate this?</strong><button onClick={confirmDonation}>Yes, remove it and show locations</button><button onClick={() => setDonationConfirm(false)}>No, keep it</button></div>}<small>Your location stays in your browser and is not stored by StyleAI.</small></div>}
     </section></div>}
 
-    {profileOpen && <div className="modal-backdrop" onClick={() => setProfileOpen(false)}><section className="profile-modal" onClick={event => event.stopPropagation()}><button className="drawer-close" onClick={() => setProfileOpen(false)}>×</button><p className="eyebrow"><span /> FITTING ROOM PROFILE</p><h2>Choose your photo.</h2><p>Select a previous full-body upload or add a new one. New try-ons will use this picture.</p><div className="profile-grid">{modelOptions.map(image => <button key={image.path} className={modelPath === image.path ? "active" : ""} onClick={() => chooseModel(image)}><img src={`${API}${image.url}`} alt={image.name}/><span>{image.name}</span></button>)}</div><label className="profile-upload">＋ Upload a new full-body photo<input type="file" accept="image/*" onChange={event => uploadModel(event.target.files[0])}/></label></section></div>}
+    {profileOpen && <div className="modal-backdrop" onClick={() => setProfileOpen(false)}><section className="profile-modal" onClick={event => event.stopPropagation()}><button className="drawer-close" onClick={() => setProfileOpen(false)}>×</button><p className="eyebrow"><span /> YOUR STYLE PROFILE</p><div className="profile-identity"><span>{user.initials}</span><div><h2>{user.name}</h2><p>{user.email}</p></div></div><div className="preference-block"><small>STYLE PREFERENCES</small><div>{user.style_preferences.map(value => <span key={value}>{value}</span>)}</div><small>PREFERRED COLOURS</small><div>{user.preferred_colors.map(value => <span key={value}>{value}</span>)}</div><small>PERSONALISATION</small><p>{user.fit_preferences.join(" · ")}<br/>{user.shopping_priorities.join(" · ")}</p></div><h3>Fitting-room photo</h3><p>Select a previous full-body upload or add a new one. New try-ons will use this picture.</p><div className="profile-grid">{modelOptions.map(image => <button key={image.path} className={modelPath === image.path ? "active" : ""} onClick={() => chooseModel(image)}><img src={`${API}${image.url}`} alt={image.name}/><span>{image.name}</span></button>)}</div><label className="profile-upload">＋ Upload a new full-body photo<input type="file" accept="image/*" onChange={event => uploadModel(event.target.files[0])}/></label><button className="sign-out" onClick={signOut}>Sign out</button></section></div>}
 
     {uploadOpen && <div className="modal-backdrop" onClick={() => setUploadOpen(false)}><div className="upload-modal" onClick={event => event.stopPropagation()}><button className="drawer-close" onClick={() => setUploadOpen(false)}>×</button><span className="upload-icon">＋</span><h2>Add to your closet</h2><p>Upload one clear garment photo. AI will identify and organise it automatically.</p><label>Choose a clothing photo<input type="file" accept="image/*" onChange={event => uploadItem(event.target.files[0])}/></label></div></div>}
   </main>;

@@ -1,18 +1,23 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import uvicorn
 from capture import tag_clothing
-from inventory import donate_item, load_closet, save_item
+from inventory import delete_item, donate_item, load_closet, save_item, save_online_item
 from tryon import inference_timesteps, run_tryon, run_tryon_outfit
 from tryon_jobs import create_tryon_job, get_tryon_job
 from stylist import generate_outfits
-from inspiration import search_outfit_inspiration
+from inspiration import search_outfit_inspiration, search_shoppable_products
 from circularity import generate_restyle_guides
+from auth import login, user_for_token
 from starlette.concurrency import run_in_threadpool
 import uuid
 import os
+import ipaddress
+import socket
+from urllib.parse import urlparse
+import httpx
 
 app = FastAPI()
 
@@ -90,6 +95,39 @@ class InspirationRequest(BaseModel):
 class ItemActionRequest(BaseModel):
     item_id: int
 
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+class ProductSearchRequest(BaseModel):
+    query: str = ""
+    surprise: bool = False
+    vibe: list[str] = []
+
+class OnlineItemRequest(BaseModel):
+    title: str
+    image: str
+    url: str
+    category: str = "top"
+    color: str = "unknown"
+    add_to_closet: bool = False
+
+@app.post("/auth/login")
+def auth_login(req: LoginRequest):
+    result = login(req.email, req.password)
+    if not result:
+        raise HTTPException(status_code=401, detail="Incorrect email or password")
+    token, user = result
+    return {"token": token, "user": user}
+
+@app.get("/auth/me")
+def auth_me(authorization: str | None = Header(default=None)):
+    token = authorization.removeprefix("Bearer ").strip() if authorization else ""
+    user = user_for_token(token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Session expired")
+    return user
+
 @app.post("/recommendations")
 async def recommendations(req: RecommendationRequest):
     items = [item for item in load_closet() if item.get("status") == "active"]
@@ -102,6 +140,45 @@ async def online_inspiration(req: InspirationRequest):
     except Exception as error:
         print(f"[exa] search failed: {error}")
         raise HTTPException(status_code=502, detail="Online inspiration search is unavailable") from error
+
+@app.post("/online-products")
+async def online_products(req: ProductSearchRequest):
+    items = [item for item in load_closet() if item.get("status") == "active"]
+    try:
+        results = await search_shoppable_products(req.query, items, req.vibe, req.surprise)
+        return {"results": results, "mode": "surprise" if req.surprise else "search"}
+    except Exception as error:
+        print(f"[products] search failed: {error}")
+        raise HTTPException(status_code=502, detail="Online product inspiration is unavailable") from error
+
+def _safe_remote_image(url):
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or not parsed.hostname:
+        raise HTTPException(status_code=400, detail="Invalid product image URL")
+    try:
+        addresses = socket.getaddrinfo(parsed.hostname, 443, type=socket.SOCK_STREAM)
+        if any(ipaddress.ip_address(address[4][0]).is_private or ipaddress.ip_address(address[4][0]).is_loopback for address in addresses):
+            raise HTTPException(status_code=400, detail="Private image hosts are not allowed")
+    except socket.gaierror as error:
+        raise HTTPException(status_code=400, detail="Product image host could not be resolved") from error
+
+@app.post("/import-online-item")
+async def import_online_item(req: OnlineItemRequest):
+    _safe_remote_image(req.image)
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+        response = await client.get(req.image)
+        response.raise_for_status()
+        content_type = response.headers.get("content-type", "")
+        if not content_type.startswith("image/") or len(response.content) > 12_000_000:
+            raise HTTPException(status_code=400, detail="Retailer image is unavailable or too large")
+    extension = "png" if "png" in content_type else "jpg"
+    filepath = f"uploads/online_{uuid.uuid4()}.{extension}"
+    with open(filepath, "wb") as file:
+        file.write(response.content)
+    item = None
+    if req.add_to_closet:
+        item = save_online_item(req.title, req.category, req.color, req.url, filepath)
+    return {"path": filepath, "item": item}
 
 @app.post("/restyle-guides")
 async def restyle_item(req: ItemActionRequest):
@@ -117,6 +194,12 @@ async def donate_closet_item(req: ItemActionRequest):
     if not item:
         raise HTTPException(status_code=404, detail="Closet item not found")
     return {"message": "Item removed from the active closet", "item": item}
+
+@app.delete("/inventory/{item_id}")
+def remove_closet_item(item_id: int):
+    if not delete_item(item_id):
+        raise HTTPException(status_code=404, detail="Closet item not found")
+    return {"message": "Item deleted", "item_id": item_id}
 
 @app.get("/model-images")
 def model_images():
