@@ -1,7 +1,10 @@
 import os
 import json
+import asyncio
+from io import BytesIO
 import httpx
 from openai import AsyncOpenAI
+from PIL import Image
 
 
 async def search_outfit_inspiration(query: str, occasion: str = "casual"):
@@ -58,7 +61,7 @@ async def search_shoppable_products(query: str, closet: list, vibe: list, surpri
             intent = direction.choices[0].message.content.strip()
         except Exception as error:
             print(f"[products] AI shopping direction unavailable: {error}")
-    search_query = f"{intent} product buy SHEIN Shopee Zalora H&M clothing"
+    search_query = f"{intent} product full body model wearing outfit mannequin buy SHEIN Shopee Zalora H&M clothing"
     payload = {
         "query": search_query,
         "type": "auto",
@@ -80,6 +83,25 @@ async def search_shoppable_products(query: str, closet: list, vibe: list, surpri
         "category": "top",
         "color": "unknown",
     } for result in raw if result.get("url") and result.get("image")]
+
+    async def portrait_score(product):
+        try:
+            async with httpx.AsyncClient(timeout=8, follow_redirects=True) as image_client:
+                image_response = await image_client.get(product["image"])
+                if len(image_response.content) > 8_000_000:
+                    return 0
+            with Image.open(BytesIO(image_response.content)) as preview:
+                width, height = preview.size
+            product["image_width"] = width
+            product["image_height"] = height
+            product["full_body_preferred"] = height / max(width, 1) >= 1.2
+            return 2 if height / max(width, 1) >= 1.45 else 1 if height > width else 0
+        except Exception:
+            product["full_body_preferred"] = False
+            return 0
+
+    scores = await asyncio.gather(*(portrait_score(product) for product in products))
+    products = [product for _, product in sorted(zip(scores, products), key=lambda pair: pair[0], reverse=True)]
 
     if openai_key and products:
         try:

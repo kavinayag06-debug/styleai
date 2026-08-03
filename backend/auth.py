@@ -9,9 +9,9 @@ DEMO_PASSWORD_HASH = hashlib.sha256(os.environ.get("STYLEAI_DEMO_PASSWORD", "pas
 TOKENS = {}
 
 USER_PROFILE = {
-    "name": "Kavinaya Ganesan",
+    "name": "Pooja Hedge",
     "email": DEMO_EMAIL,
-    "initials": "KG",
+    "initials": "PH",
     "style_preferences": ["vintage", "cottagecore", "soft minimalism"],
     "preferred_colors": ["aqua", "blue", "grey", "cream"],
     "fit_preferences": ["balanced silhouettes", "comfortable", "wide-leg bottoms"],

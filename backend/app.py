@@ -221,6 +221,20 @@ async def upload_model_image(file: UploadFile = File(...)):
         f.write(await file.read())
     return {"name": filename, "path": filepath, "url": f"/uploads/{filename}"}
 
+@app.delete("/model-images/{filename}")
+def delete_model_image(filename: str):
+    safe_name = os.path.basename(filename)
+    if safe_name != filename or not ("model" in safe_name.lower() or "user" in safe_name.lower()):
+        raise HTTPException(status_code=400, detail="Invalid profile image")
+    candidates = [name for name in os.listdir("uploads") if name.lower().endswith((".png", ".jpg", ".jpeg", ".webp")) and ("model" in name.lower() or "user" in name.lower())]
+    if len(candidates) <= 1:
+        raise HTTPException(status_code=400, detail="Keep at least one fitting-room photo")
+    filepath = os.path.join("uploads", safe_name)
+    if not os.path.isfile(filepath):
+        raise HTTPException(status_code=404, detail="Profile image not found")
+    os.remove(filepath)
+    return {"message": "Profile image deleted", "name": safe_name}
+
 @app.post("/tryon-by-path")
 async def tryon_by_path(req: TryOnRequest):
     try:
