@@ -67,3 +67,70 @@ Return only JSON:
     except Exception as error:
         print(f"[stylist] OpenAI unavailable, using fallback: {error}")
         return {"outfits": fallback, "source": "smart-fallback"}
+
+
+def _complementary_candidates(online_item, closet):
+    category = online_item.get("category", "top")
+    allowed = {
+        "top": {"bottom"},
+        "bottom": {"top"},
+        "dress": {"outerwear"},
+        "outerwear": {"top", "dress"},
+    }.get(category, {"top", "bottom"})
+    return [item for item in closet if item.get("status") == "active" and item.get("category") in allowed]
+
+
+async def rank_closet_matches(online_item, closet):
+    """Rank owned garments that can complete an outfit around one online find."""
+    candidates = _complementary_candidates(online_item, closet)
+    fallback = [{
+        "item_id": item["id"],
+        "score": max(62, 84 - index * 7),
+        "reason": f"The {item.get('color', 'neutral')} {item.get('name', 'piece')} gives this {online_item.get('category', 'item')} a balanced, wearable counterpart.",
+    } for index, item in enumerate(candidates)]
+    if not candidates:
+        return {"matches": [], "source": "no-compatible-items"}
+
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        return {"matches": fallback, "source": "smart-fallback"}
+
+    prompt = f"""You are a precise fashion compatibility engine.
+Rank EVERY candidate garment from the user's closet by how well it completes an outfit with this online garment.
+
+Online garment:
+{json.dumps(online_item)}
+
+Owned candidates:
+{json.dumps(candidates)}
+
+Judge colour harmony, silhouette balance, pattern interaction, fabric weight, formality and versatility.
+Use only the candidate IDs supplied. Give each a distinct integer score from 0 to 100 and one specific sentence explaining the pairing. Return strongest first.
+Return only JSON: {{"matches":[{{"item_id":1,"score":92,"reason":"specific explanation"}}]}}"""
+    try:
+        response = await AsyncOpenAI(api_key=api_key).chat.completions.create(
+            model="gpt-4o-mini",
+            response_format={"type": "json_object"},
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.25,
+        )
+        raw = json.loads(response.choices[0].message.content).get("matches", [])
+        by_id = {item["id"]: item for item in candidates}
+        clean = []
+        seen = set()
+        for match in raw:
+            item_id = match.get("item_id")
+            if item_id not in by_id or item_id in seen:
+                continue
+            seen.add(item_id)
+            clean.append({
+                "item_id": item_id,
+                "score": max(0, min(100, int(match.get("score", 0)))),
+                "reason": str(match.get("reason") or "A compatible option from your closet."),
+            })
+        clean.extend(match for match in fallback if match["item_id"] not in seen)
+        clean.sort(key=lambda match: match["score"], reverse=True)
+        return {"matches": clean, "source": "openai"}
+    except Exception as error:
+        print(f"[stylist] Online-to-closet matching unavailable, using fallback: {error}")
+        return {"matches": fallback, "source": "smart-fallback"}

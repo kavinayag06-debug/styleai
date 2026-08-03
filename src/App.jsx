@@ -40,6 +40,10 @@ export default function App() {
   const [onlineQuery, setOnlineQuery] = useState("");
   const [onlineResults, setOnlineResults] = useState([]);
   const [triedProducts, setTriedProducts] = useState(() => new Set(JSON.parse(window.localStorage.getItem("styleai-tried-products") || "[]")));
+  const [pairingProduct, setPairingProduct] = useState(null);
+  const [pairMatches, setPairMatches] = useState([]);
+  const [selectedPairId, setSelectedPairId] = useState(null);
+  const [pairLoading, setPairLoading] = useState(false);
   const [activeLook, setActiveLook] = useState(null);
   const [loading, setLoading] = useState(false);
   const [tryOnLoading, setTryOnLoading] = useState(false);
@@ -226,6 +230,56 @@ export default function App() {
     finally { setLoading(false); }
   };
 
+  const openPairing = async product => {
+    setPairingProduct(product); setPairMatches([]); setSelectedPairId(null); setPairLoading(true); setError("");
+    try {
+      const response = await fetch(`${API}/pair-online-item`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(product),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Could not compare this item with your closet");
+      setPairMatches(data.matches || []);
+      setSelectedPairId(data.matches?.[0]?.item_id || null);
+    } catch (requestError) { setError(requestError.message); }
+    finally { setPairLoading(false); }
+  };
+
+  const tryPairedLook = async () => {
+    const match = pairMatches.find(option => option.item_id === selectedPairId);
+    if (!pairingProduct || !match) return;
+    setPairLoading(true); setError("");
+    try {
+      const response = await fetch(`${API}/import-online-item`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...pairingProduct, add_to_closet: false }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Could not prepare this online garment");
+      const onlineGarment = {
+        name: pairingProduct.title,
+        category: pairingProduct.category,
+        color: pairingProduct.color,
+        image_path: data.path,
+        image: pairingProduct.image,
+      };
+      const look = {
+        name: `${pairingProduct.color || "New"} + ${match.item.color || "closet"}`,
+        reason: match.reason,
+        item_ids: [],
+        items: [onlineGarment, match.item],
+      };
+      setPairingProduct(null);
+      await tryOn(look);
+      setTriedProducts(current => {
+        const next = new Set(current); next.add(pairingProduct.url);
+        window.localStorage.setItem("styleai-tried-products", JSON.stringify([...next]));
+        return next;
+      });
+    } catch (requestError) { setError(requestError.message); }
+    finally { setPairLoading(false); }
+  };
+
   const signIn = async event => {
     event.preventDefault(); setLoginError("");
     const form = new FormData(event.currentTarget);
@@ -319,7 +373,7 @@ export default function App() {
         {error && <p className="inline-error">{error}</p>}
         <div className="recommendation-list">
           <div className="rec-title"><span>{recommendationMode === "closet" ? "AI RECOMMENDATIONS" : "ONLINE INSPIRATION"}</span><small>{recommendationMode === "closet" ? (recommendations.length ? `${recommendations.length} looks` : "Tap Dress me") : (onlineResults.length ? `${onlineResults.length} finds` : "Search a style")}</small></div>
-          {recommendationMode === "closet" ? <>{!recommendations.length && <div className="empty-rec"><b>✦</b><span>Your styled looks will appear here.</span></div>}{recommendations.map((look, index) => <button key={`${look.name}-${index}`} className={`rec-card ${activeLook === look ? "active" : ""}`} onClick={() => tryOn(look)} disabled={tryOnLoading}><span>0{index + 1}</span><div><strong>{look.name}</strong><small>{activeLook === look && tryOnLoading ? "Creating try-on…" : look.reason}</small></div><i>→</i></button>)}</> : <>{!onlineResults.length && <div className="empty-rec"><b>⌕</b><span>Search with keywords or let AI surprise you.</span></div>}{onlineResults.map((product, index) => <article key={`${product.url}-${index}`} className={`product-card ${triedProducts.has(product.url) ? "tried" : ""}`}><a href={product.url} target="_blank" rel="noreferrer"><img src={product.image} alt={product.title}/>{triedProducts.has(product.url) && <span className="tried-badge">✓ Tried on</span>}</a><div><strong>{product.title}</strong><small>{product.retailer} · {product.category}{product.full_body_preferred ? " · full-body preview" : ""}</small><p>{product.summary}</p><div className="product-actions"><button onClick={() => importProduct(product, false)}>{triedProducts.has(product.url) ? "Try again" : "Try on"}</button><button onClick={() => importProduct(product, true)}>＋ Closet</button></div></div></article>)}</>}
+          {recommendationMode === "closet" ? <>{!recommendations.length && <div className="empty-rec"><b>✦</b><span>Your styled looks will appear here.</span></div>}{recommendations.map((look, index) => <button key={`${look.name}-${index}`} className={`rec-card ${activeLook === look ? "active" : ""}`} onClick={() => tryOn(look)} disabled={tryOnLoading}><span>0{index + 1}</span><div><strong>{look.name}</strong><small>{activeLook === look && tryOnLoading ? "Creating try-on…" : look.reason}</small></div><i>→</i></button>)}</> : <>{!onlineResults.length && <div className="empty-rec"><b>⌕</b><span>Search with keywords or let AI surprise you.</span></div>}{onlineResults.map((product, index) => <article key={`${product.url}-${index}`} className={`product-card ${triedProducts.has(product.url) ? "tried" : ""}`}><a href={product.url} target="_blank" rel="noreferrer"><img src={product.image} alt={product.title}/>{triedProducts.has(product.url) && <span className="tried-badge">✓ Tried on</span>}</a><div><strong>{product.title}</strong><small>{product.retailer} · {product.category}{product.full_body_preferred ? " · full-body preview" : ""}</small><p>{product.summary}</p><div className="product-actions"><button onClick={() => openPairing(product)}>✦ Pair with closet</button><button onClick={() => importProduct(product, false)}>{triedProducts.has(product.url) ? "Try again" : "Try solo"}</button><button onClick={() => importProduct(product, true)}>＋ Closet</button></div></div></article>)}</>}
         </div>
         <p className="closet-count">{closet.length} pieces in your digital wardrobe</p>
       </aside>
@@ -359,5 +413,15 @@ export default function App() {
     {profileOpen && <div className="modal-backdrop" onClick={() => setProfileOpen(false)}><section className="profile-modal" onClick={event => event.stopPropagation()}><button className="drawer-close" onClick={() => setProfileOpen(false)}>×</button><p className="eyebrow"><span /> YOUR STYLE PROFILE</p><div className="profile-identity"><span>{user.initials}</span><div><h2>{user.name}</h2><p>{user.email}</p></div></div><div className="preference-block"><small>STYLE PREFERENCES</small><div>{user.style_preferences.map(value => <span key={value}>{value}</span>)}</div><small>PREFERRED COLOURS</small><div>{user.preferred_colors.map(value => <span key={value}>{value}</span>)}</div><small>PERSONALISATION</small><p>{user.fit_preferences.join(" · ")}<br/>{user.shopping_priorities.join(" · ")}</p></div><h3>Fitting-room photo</h3><p>Select a previous full-body upload or add a new one. New try-ons will use this picture.</p><div className="profile-grid">{modelOptions.map(image => <article key={image.path} className={modelPath === image.path ? "active" : ""}><button className="delete-model" onClick={() => deleteModel(image)} title="Delete this photo">⌫</button><button className="choose-model" onClick={() => chooseModel(image)}><img src={`${API}${image.url}`} alt={image.name}/><span>{image.name}</span></button></article>)}</div><label className="profile-upload">＋ Upload a new full-body photo<input type="file" accept="image/*" onChange={event => uploadModel(event.target.files[0])}/></label><button className="sign-out" onClick={signOut}>Sign out</button></section></div>}
 
     {uploadOpen && <div className="modal-backdrop" onClick={() => setUploadOpen(false)}><div className="upload-modal" onClick={event => event.stopPropagation()}><button className="drawer-close" onClick={() => setUploadOpen(false)}>×</button><span className="upload-icon">＋</span><h2>Add to your closet</h2><p>Upload one clear garment photo. AI will identify and organise it automatically.</p><label>Choose a clothing photo<input type="file" accept="image/*" onChange={event => uploadItem(event.target.files[0])}/></label></div></div>}
+
+    {pairingProduct && <div className="modal-backdrop" onClick={() => !pairLoading && setPairingProduct(null)}><section className="pairing-modal" onClick={event => event.stopPropagation()}>
+      <button className="drawer-close" onClick={() => setPairingProduct(null)} disabled={pairLoading}>×</button>
+      <p className="eyebrow"><span /> AI OUTFIT COMPATIBILITY</p><h2>Pair it with your closet.</h2>
+      <p>StyleAI compared this online find with every compatible piece you own. The strongest match is selected, but the final choice is yours.</p>
+      <div className="pair-online-piece"><img src={pairingProduct.image} alt={pairingProduct.title}/><div><small>ONLINE FIND</small><strong>{pairingProduct.title}</strong><span>{pairingProduct.color} · {pairingProduct.category}</span></div></div>
+      {pairLoading && !pairMatches.length && <div className="pairing-loading">✦ Checking colour, silhouette, pattern and fabric…</div>}
+      {!pairLoading && !pairMatches.length && <div className="pairing-loading">No complementary closet category is available yet. Add a matching separate to your closet first.</div>}
+      {!!pairMatches.length && <><div className="pair-heading"><span>CHOOSE AN OWNED MATCH</span><small>{pairMatches.length} compatible options</small></div><div className="pair-options">{pairMatches.map((match, index) => <button key={match.item_id} className={selectedPairId === match.item_id ? "active" : ""} onClick={() => setSelectedPairId(match.item_id)}><img src={closetImage(match.item)} alt={match.item.name}/><div><span>{index === 0 ? "BEST MATCH" : `OPTION ${index + 1}`}</span><strong>{match.item.name}</strong><small>{match.reason}</small></div><b>{match.score}%</b></button>)}</div><button className="pair-try" onClick={tryPairedLook} disabled={pairLoading || tryOnLoading}>{pairLoading ? "Preparing look…" : "Try this complete look"}<span>→</span></button></>}
+    </section></div>}
   </main>;
 }

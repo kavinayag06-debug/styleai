@@ -20,7 +20,6 @@ source .venv-vton/bin/activate
 cd backend
 source .venv-vton/bin/activate
 export OPENAI_API_KEY="your-key"
-export EXA_API_KEY="your-exa-key"
 export FASHN_TIMESTEPS="20"
 uvicorn app:app --reload --port 8000
 ```
@@ -43,6 +42,7 @@ Open `http://localhost:5173`. The frontend connects to `http://localhost:8000` b
 - `GET /inventory` — load the user's closet
 - `POST /recommendations` — generate outfits from active closet items
 - `POST /online-inspiration` — search the web for outside outfit inspiration with Exa
+- `POST /pair-online-item` — rank compatible owned garments for one online find using OpenAI
 - `POST /upload` — upload and AI-tag a garment
 - `POST /tryon-jobs` — enqueue a complete top/bottom try-on and immediately return a job ID
 - `GET /tryon-jobs/{job_id}` — poll queued/running/completed status without a long-lived request
@@ -59,7 +59,7 @@ The backend uses FASHN's `model` garment-photo mode, 20 diffusion steps in the d
 For a fast technical review, these are the most important implementation paths:
 
 - [`src/App.jsx`](src/App.jsx) — the complete user journey: authentication, closet management, AI recommendations, online inspiration, fitting-room job polling, restyle tutorials, donation flow, and profile controls.
-- [`backend/stylist.py`](backend/stylist.py) — the OpenAI fashion-matching prompt and the validation that ensures a recommended outfit contains a compatible top and bottom (or a dress).
+- [`backend/stylist.py`](backend/stylist.py) — OpenAI fashion matching for full closet looks and online-to-closet compatibility ranking, plus validation that ensures a recommended outfit contains a compatible top and bottom (or a dress).
 - [`backend/inspiration.py`](backend/inspiration.py) — OpenAI-personalised shopping direction combined with Exa product discovery and image-quality ranking.
 - [`backend/tryon.py`](backend/tryon.py) — the FASHN VTON v1.5 inference adapter, sequential top/bottom try-on, image preparation, deterministic seed, and configurable diffusion-step count.
 - [`backend/tryon_jobs.py`](backend/tryon_jobs.py) — the background inference queue, duplicate-request protection, progress state, elapsed-time measurement, and completed-job metrics.
@@ -72,7 +72,7 @@ The strongest end-to-end evidence is visible by creating a try-on job, watching 
 
 ## Current constraints and external dependencies
 
-- OpenAI-backed matching and synthesis require `OPENAI_API_KEY`; online product and tutorial discovery require `EXA_API_KEY`; model downloads may require `HF_TOKEN`.
+- OpenAI-backed matching and synthesis require `OPENAI_API_KEY`; online discovery requires its search-provider configuration; model downloads may require `HF_TOKEN`.
 - FASHN VTON inference requires its model weights and benefits substantially from an NVIDIA GPU. CPU execution is possible but is not suitable for a responsive demo.
 - Login and wardrobe persistence are demo implementations backed by in-memory state and local JSON/files rather than a production identity provider and database.
 - Online retailers may change page structure, image access, or availability, so external shopping results are best-effort and links should be rechecked before purchase.

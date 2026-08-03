@@ -7,7 +7,7 @@ from capture import tag_clothing
 from inventory import delete_item, donate_item, load_closet, save_item, save_online_item
 from tryon import inference_timesteps, run_tryon, run_tryon_outfit
 from tryon_jobs import create_tryon_job, get_tryon_job, summarize_jobs
-from stylist import generate_outfits
+from stylist import generate_outfits, rank_closet_matches
 from inspiration import search_outfit_inspiration, search_shoppable_products
 from circularity import generate_restyle_guides
 from auth import login, user_for_token
@@ -112,6 +112,14 @@ class OnlineItemRequest(BaseModel):
     color: str = "unknown"
     add_to_closet: bool = False
 
+class PairOnlineItemRequest(BaseModel):
+    title: str
+    image: str
+    url: str
+    category: str = "top"
+    color: str = "unknown"
+    summary: str = ""
+
 @app.post("/auth/login")
 def auth_login(req: LoginRequest):
     result = login(req.email, req.password)
@@ -150,6 +158,19 @@ async def online_products(req: ProductSearchRequest):
     except Exception as error:
         print(f"[products] search failed: {error}")
         raise HTTPException(status_code=502, detail="Online product inspiration is unavailable") from error
+
+@app.post("/pair-online-item")
+async def pair_online_item(req: PairOnlineItemRequest):
+    items = [item for item in load_closet() if item.get("status") == "active"]
+    online_item = req.model_dump()
+    ranking = await rank_closet_matches(online_item, items)
+    item_by_id = {item["id"]: item for item in items}
+    matches = [
+        {**match, "item": item_by_id[match["item_id"]]}
+        for match in ranking["matches"]
+        if match["item_id"] in item_by_id
+    ]
+    return {"online_item": online_item, "matches": matches, "source": ranking["source"]}
 
 def _safe_remote_image(url):
     parsed = urlparse(url)
